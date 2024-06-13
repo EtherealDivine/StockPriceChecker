@@ -1,6 +1,7 @@
 "use strict";
 const express = require("express");
 let mongoose = require("mongoose");
+let XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest
 let mongodb = require("mongodb");
 
 module.exports = function (app) {
@@ -60,6 +61,7 @@ module.exports = function (app) {
     /* Build Response for 1 Stock */
     let processOneStock = (stockDocument, nextStep) => {
       responseObject["stockData"]["stock"] = stockDocument["name"];
+      responseObject['stockData']['price'] = stockDocument['price']
       responseObject["stockData"]["likes"] = stockDocument["likes"];
       nextStep();
     };
