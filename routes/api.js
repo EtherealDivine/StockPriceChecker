@@ -1,8 +1,7 @@
 "use strict";
 const express = require("express");
-let mongoose = require("mongoose");
-let XMLHttpRequest = require("xmlhttprequest").XMLHttpRequest;
-let mongodb = require("mongodb");
+const mongoose = require("mongoose");
+const XMLHttpRequest = require("xmlhttprequest").XMLHttpRequest;
 
 module.exports = function (app) {
   let uri = process.env.MONGO_URI;
@@ -20,18 +19,10 @@ module.exports = function (app) {
 
   app.route("/api/stock-prices").get(async function (req, res) {
     let responseObject = {};
-    responseObject["stockData"] = {};
-
-    // Variable to determine number of stocks
-    let twoStocks = false;
-
-    /* Output Response */
-    let outputResponse = () => {
-      return res.json(responseObject);
-    };
+    responseObject["stockData"] = [];
 
     /* Find/Update Stock Document */
-    let findOrUpdateStock = async (stockName, documentUpdate) => {
+    const findOrUpdateStock = async (stockName, documentUpdate) => {
       try {
         let stockDocument = await Stock.findOneAndUpdate(
           { name: stockName },
@@ -46,78 +37,44 @@ module.exports = function (app) {
     };
 
     /* Like Stock */
-    let likeStock = async (stockName, ip) => {
+    const likeStock = async (stockName, ip) => {
       let documentUpdate = { $inc: { likes: 1 }, $addToSet: { ips: ip } };
       return await findOrUpdateStock(stockName, documentUpdate);
     };
 
     /* Get Price */
-    let getPrice = async (stockDocument, nextStep) => {
-      let stockName = stockDocument.name;
-      let xhr = new XMLHttpRequest();
-      xhr.open(
-        "GET",
-        `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stockName}/quote`,
-        true,
-      );
-      xhr.onload = function () {
-        if (xhr.status === 200) {
-          let data = JSON.parse(xhr.responseText);
-          stockDocument.price = data.latestPrice; // Assuming 'latestPrice' contains the stock price
-          nextStep(stockDocument, outputResponse);
-        } else {
-          console.log(
-            `Error fetching price for ${stockName}: ${xhr.statusText}`,
-          );
-          stockDocument.price = null;
-          nextStep(stockDocument, outputResponse);
-        }
-      };
-      xhr.send();
+    const getPrice = async (stockName) => {
+      return new Promise((resolve, reject) => {
+        let xhr = new XMLHttpRequest();
+        xhr.open(
+          "GET",
+          `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stockName}/quote`,
+          true,
+        );
+        xhr.onload = function () {
+          if (xhr.status === 200) {
+            let data = JSON.parse(xhr.responseText);
+            resolve(data.latestPrice); // Assuming 'latestPrice' contains the stock price
+          } else {
+            reject(`Error fetching price for ${stockName}: ${xhr.statusText}`);
+          }
+        };
+        xhr.onerror = function () {
+          reject(`Error fetching price for ${stockName}: ${xhr.statusText}`);
+        };
+        xhr.send();
+      });
     };
 
-    /* Build Response for 1 Stock */
-    let processOneStock = (stockDocument, nextStep) => {
-      responseObject["stockData"]["stock"] = stockDocument["name"];
-      responseObject["stockData"]["price"] = stockDocument["price"];
-      responseObject["stockData"]["likes"] = stockDocument["likes"];
-      nextStep();
-    };
-
-    /* Build Response for 2 Stocks */
-    let processTwoStocks = (stockDocuments, nextStep) => {
-      responseObject["stockData"] = stockDocuments.map((doc) => ({
-        stock: doc.name,
-        price: doc.price,
-        likes: doc.likes,
-      }));
-      nextStep();
-    };
-
-    /* Process Input*/
-    if (typeof req.query.stock === "string") {
-      /* One Stock */
-      let stockName = req.query.stock;
-      let stockDocument;
-
-      if (req.query.like === "true") {
-        stockDocument = await likeStock(stockName, req.ip);
-      } else {
-        stockDocument = await findOrUpdateStock(stockName, {});
-      }
-
-      if (stockDocument) {
-        getPrice(stockDocument, processOneStock);
-      }
-    } else if (Array.isArray(req.query.stock)) {
-      twoStocks = true;
-      /* Two Stocks */
-      let stockNames = req.query.stock;
+    /* Process Input */
+    try {
+      let stockNames = Array.isArray(req.query.stock)
+        ? req.query.stock
+        : [req.query.stock];
       let stockDocuments = [];
 
       for (let stockName of stockNames) {
         let stockDocument;
-
         if (req.query.like === "true") {
           stockDocument = await likeStock(stockName, req.ip);
         } else {
@@ -125,13 +82,32 @@ module.exports = function (app) {
         }
 
         if (stockDocument) {
-          await getPrice(stockDocument, (doc) => stockDocuments.push(doc));
+          stockDocument.price = await getPrice(stockName);
+          stockDocuments.push(stockDocument);
         }
       }
 
-      if (stockDocuments.length === 2) {
-        processTwoStocks(stockDocuments, outputResponse);
+      if (stockDocuments.length === 1) {
+        responseObject["stockData"] = {
+          stock: stockDocuments[0].name,
+          price: stockDocuments[0].price,
+          likes: stockDocuments[0].likes,
+        };
+      } else if (stockDocuments.length === 2) {
+        let rel_likes1 = stockDocuments[0].likes - stockDocuments[1].likes;
+        let rel_likes2 = stockDocuments[1].likes - stockDocuments[0].likes;
+
+        responseObject["stockData"] = stockDocuments.map((doc, index) => ({
+          stock: doc.name,
+          price: doc.price,
+          rel_likes: index === 0 ? rel_likes1 : rel_likes2,
+        }));
       }
-    } // End of API route handler
+
+      return res.json(responseObject);
+    } catch (error) {
+      console.log(error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
   });
 };
