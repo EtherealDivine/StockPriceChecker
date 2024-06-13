@@ -1,7 +1,7 @@
 "use strict";
 const express = require("express");
 let mongoose = require("mongoose");
-let XMLHttpRequest = require('xmlhttprequest').XMLHttpRequest
+let XMLHttpRequest = require("xmlhttprequest").XMLHttpRequest;
 let mongodb = require("mongodb");
 
 module.exports = function (app) {
@@ -36,7 +36,7 @@ module.exports = function (app) {
         let stockDocument = await Stock.findOneAndUpdate(
           { name: stockName },
           documentUpdate,
-          { new: true, upsert: true }
+          { new: true, upsert: true },
         );
         return stockDocument;
       } catch (error) {
@@ -53,15 +53,33 @@ module.exports = function (app) {
 
     /* Get Price */
     let getPrice = async (stockDocument, nextStep) => {
-      // Here, you'd normally fetch the stock price from an API and add it to the stockDocument.
-      // For now, let's assume this function is provided and focus on the Mongoose part.
-      nextStep(stockDocument, outputResponse);
+      let stockName = stockDocument.name;
+      let xhr = new XMLHttpRequest();
+      xhr.open(
+        "GET",
+        `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stockName}/quote`,
+        true,
+      );
+      xhr.onload = function () {
+        if (xhr.status === 200) {
+          let data = JSON.parse(xhr.responseText);
+          stockDocument.price = data.latestPrice; // Assuming 'latestPrice' contains the stock price
+          nextStep(stockDocument, outputResponse);
+        } else {
+          console.log(
+            `Error fetching price for ${stockName}: ${xhr.statusText}`,
+          );
+          stockDocument.price = null;
+          nextStep(stockDocument, outputResponse);
+        }
+      };
+      xhr.send();
     };
 
     /* Build Response for 1 Stock */
     let processOneStock = (stockDocument, nextStep) => {
       responseObject["stockData"]["stock"] = stockDocument["name"];
-      responseObject['stockData']['price'] = stockDocument['price']
+      responseObject["stockData"]["price"] = stockDocument["price"];
       responseObject["stockData"]["likes"] = stockDocument["likes"];
       nextStep();
     };
@@ -70,6 +88,7 @@ module.exports = function (app) {
     let processTwoStocks = (stockDocuments, nextStep) => {
       responseObject["stockData"] = stockDocuments.map((doc) => ({
         stock: doc.name,
+        price: doc.price,
         likes: doc.likes,
       }));
       nextStep();
@@ -106,7 +125,7 @@ module.exports = function (app) {
         }
 
         if (stockDocument) {
-          stockDocuments.push(stockDocument);
+          await getPrice(stockDocument, (doc) => stockDocuments.push(doc));
         }
       }
 
