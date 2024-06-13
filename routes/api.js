@@ -5,8 +5,12 @@ const XMLHttpRequest = require("xmlhttprequest").XMLHttpRequest;
 
 module.exports = function (app) {
   let uri = process.env.MONGO_URI;
+  console.log("Connecting to MongoDB with URI:", uri);
 
-  mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+  mongoose
+    .connect(uri)
+    .then(() => console.log("MongoDB connected successfully"))
+    .catch((err) => console.log("MongoDB connection error:", err));
 
   // Create a schema and model to represent the stocks.
   let stockSchema = new mongoose.Schema({
@@ -24,11 +28,13 @@ module.exports = function (app) {
     /* Find/Update Stock Document */
     const findOrUpdateStock = async (stockName, documentUpdate) => {
       try {
+        console.log(`Finding or updating stock: ${stockName}`);
         let stockDocument = await Stock.findOneAndUpdate(
           { name: stockName },
           documentUpdate,
           { new: true, upsert: true },
         );
+        console.log(`Stock document for ${stockName}:`, stockDocument);
         return stockDocument;
       } catch (error) {
         console.log(error);
@@ -38,6 +44,14 @@ module.exports = function (app) {
 
     /* Like Stock */
     const likeStock = async (stockName, ip) => {
+      console.log(`Liking stock: ${stockName} from IP: ${ip}`);
+      let stockDocument = await Stock.findOne({ name: stockName });
+
+      if (stockDocument && stockDocument.ips.includes(ip)) {
+        console.log(`IP ${ip} has already liked stock ${stockName}`);
+        return stockDocument; // Return the document without incrementing likes
+      }
+
       let documentUpdate = { $inc: { likes: 1 }, $addToSet: { ips: ip } };
       return await findOrUpdateStock(stockName, documentUpdate);
     };
@@ -46,6 +60,7 @@ module.exports = function (app) {
     const getPrice = async (stockName) => {
       return new Promise((resolve, reject) => {
         let xhr = new XMLHttpRequest();
+        console.log(`Fetching price for stock: ${stockName}`);
         xhr.open(
           "GET",
           `https://stock-price-checker-proxy.freecodecamp.rocks/v1/stock/${stockName}/quote`,
@@ -54,6 +69,7 @@ module.exports = function (app) {
         xhr.onload = function () {
           if (xhr.status === 200) {
             let data = JSON.parse(xhr.responseText);
+            console.log(`Price for ${stockName}:`, data.latestPrice);
             resolve(data.latestPrice); // Assuming 'latestPrice' contains the stock price
           } else {
             reject(`Error fetching price for ${stockName}: ${xhr.statusText}`);
@@ -74,6 +90,7 @@ module.exports = function (app) {
       let stockDocuments = [];
 
       for (let stockName of stockNames) {
+        console.log(`Processing stock: ${stockName}`);
         let stockDocument;
         if (req.query.like === "true") {
           stockDocument = await likeStock(stockName, req.ip);
@@ -104,6 +121,7 @@ module.exports = function (app) {
         }));
       }
 
+      console.log("Response object:", responseObject);
       return res.json(responseObject);
     } catch (error) {
       console.log(error);
